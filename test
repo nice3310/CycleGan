@@ -9,6 +9,7 @@ from torchvision.utils import save_image
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 import torch
+from PIL import Image
 
 from models import Generator
 from datasets import ImageDataset
@@ -18,16 +19,28 @@ parser.add_argument('--batchSize', type=int, default=1, help='size of the batche
 parser.add_argument('--dataroot', type=str, default='datasets/horse2zebra/', help='root directory of the dataset')
 parser.add_argument('--input_nc', type=int, default=3, help='number of channels of input data')
 parser.add_argument('--output_nc', type=int, default=3, help='number of channels of output data')
-parser.add_argument('--size', type=int, default=256, help='size of the data (squared assumed)')
 parser.add_argument('--cuda', action='store_true', help='use GPU computation')
 parser.add_argument('--n_cpu', type=int, default=8, help='number of cpu threads to use during batch generation')
-parser.add_argument('--generator_A2B', type=str, default='output/netG_A2B.pth', help='A2B generator checkpoint file')
-parser.add_argument('--generator_B2A', type=str, default='output/netG_B2A.pth', help='B2A generator checkpoint file')
+parser.add_argument('--checkpoint_dir', type=str, required=True, help='directory containing the model checkpoints (e.g., checkpoints/<subfolder>)')
+parser.add_argument('--save_dir', type=str, default='output/', help='directory to save test results')
 opt = parser.parse_args()
 print(opt)
 
 if torch.cuda.is_available() and not opt.cuda:
     print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+
+###### Ensure save directory exists ######
+save_dir_A = os.path.join(opt.save_dir, 'A')
+save_dir_B = os.path.join(opt.save_dir, 'B')
+os.makedirs(save_dir_A, exist_ok=True)
+os.makedirs(save_dir_B, exist_ok=True)
+
+###### Checkpoint paths ######
+generator_A2B_path = os.path.join(opt.checkpoint_dir, 'netG_A2B.pth')
+generator_B2A_path = os.path.join(opt.checkpoint_dir, 'netG_B2A.pth')
+
+if not os.path.exists(generator_A2B_path) or not os.path.exists(generator_B2A_path):
+    raise FileNotFoundError(f"Could not find checkpoints in {opt.checkpoint_dir}. Ensure netG_A2B.pth and netG_B2A.pth exist.")
 
 ###### Definition of variables ######
 # Networks
@@ -39,47 +52,37 @@ if opt.cuda:
     netG_B2A.cuda()
 
 # Load state dicts
-netG_A2B.load_state_dict(torch.load(opt.generator_A2B))
-netG_B2A.load_state_dict(torch.load(opt.generator_B2A))
+netG_A2B.load_state_dict(torch.load(generator_A2B_path))
+netG_B2A.load_state_dict(torch.load(generator_B2A_path))
 
 # Set model's test mode
 netG_A2B.eval()
 netG_B2A.eval()
 
-# Inputs & targets memory allocation
-Tensor = torch.cuda.FloatTensor if opt.cuda else torch.Tensor
-input_A = Tensor(opt.batchSize, opt.input_nc, opt.size, opt.size)
-input_B = Tensor(opt.batchSize, opt.output_nc, opt.size, opt.size)
-
 # Dataset loader
-transforms_ = [ transforms.ToTensor(),
-                transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)) ]
+transforms_ = [
+    transforms.ToTensor(),  # 保持原始大小
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+]
 dataloader = DataLoader(ImageDataset(opt.dataroot, transforms_=transforms_, mode='test'), 
                         batch_size=opt.batchSize, shuffle=False, num_workers=opt.n_cpu)
 ###################################
 
-###### Testing######
-
-# Create output dirs if they don't exist
-if not os.path.exists('output/A'):
-    os.makedirs('output/A')
-if not os.path.exists('output/B'):
-    os.makedirs('output/B')
-
+###### Testing ######
 for i, batch in enumerate(dataloader):
     # Set model input
-    real_A = Variable(input_A.copy_(batch['A']))
-    real_B = Variable(input_B.copy_(batch['B']))
+    real_A = Variable(batch['A'].type(torch.cuda.FloatTensor if opt.cuda else torch.FloatTensor))
+    real_B = Variable(batch['B'].type(torch.cuda.FloatTensor if opt.cuda else torch.FloatTensor))
 
     # Generate output
-    fake_B = 0.5*(netG_A2B(real_A).data + 1.0)
-    fake_A = 0.5*(netG_B2A(real_B).data + 1.0)
+    fake_B = 0.5 * (netG_A2B(real_A).data + 1.0)
+    fake_A = 0.5 * (netG_B2A(real_B).data + 1.0)
 
-    # Save image files
-    save_image(fake_A, 'output/A/%04d.png' % (i+1))
-    save_image(fake_B, 'output/B/%04d.png' % (i+1))
+    # Save image files to the specified directory
+    save_image(fake_A, os.path.join(save_dir_A, '%04d.png' % (i + 1)))
+    save_image(fake_B, os.path.join(save_dir_B, '%04d.png' % (i + 1)))
 
-    sys.stdout.write('\rGenerated images %04d of %04d' % (i+1, len(dataloader)))
+    sys.stdout.write('\rGenerated images %04d of %04d' % (i + 1, len(dataloader)))
 
 sys.stdout.write('\n')
 ###################################
