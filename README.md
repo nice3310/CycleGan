@@ -11,7 +11,7 @@ The changes include:
    - Designated checkpoint folders and more.
     
 2. **Testing**:
-   - Allows generating images with the original source dimensions.****
+   - Allows generating images with the original source dimensions.
    - Enables specifying the checkpoint folder to locate models for predictions.
 
 ## Usage Examples
